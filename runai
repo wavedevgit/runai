@@ -1,0 +1,214 @@
+#!/bin/bash
+
+
+# utils
+
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+MAGENTA="\e[35m"
+CYAN="\e[36m"
+WHITE="\e[97m"
+RESET="\e[0m"
+
+CONFIG_DIR="~/.config/runai"
+
+# ensures config directory is there!
+mkdir -p $CONFIG_DIR
+
+log()
+{
+ echo -e "[runai] $@${RESET}"
+}
+
+get_api_base_url()
+{
+ echo $(cat $CONFIG_DIR/api_base_url)
+}
+
+get_api_key()
+{
+ echo $(cat $CONFIG_DIR/api_key)
+}
+
+get_default_model()
+{
+ echo $(cat $CONFIG_DIR/default_model)
+}
+
+get_default_model_limit()
+{
+ echo $(cat $CONFIG_DIR/default_model_limit)
+}
+
+set_api_key() 
+{
+    val="${1:-null}"
+    echo "$val" > "$CONFIG_DIR/api_key"
+}
+
+set_api_base_url()
+{
+    val="${1:-null}"
+    echo "$val" > "$CONFIG_DIR/api_base_url"
+}
+
+set_default_model()
+{
+    val="${1:-null}"
+    echo "$val" > "$CONFIG_DIR/default_model"
+}
+
+set_default_model_limit()
+{
+    val="${1:-null}"
+    echo "$val" > "$CONFIG_DIR/default_model_limit"
+}
+
+check_app()
+{
+    if ! command -v "$1" >/dev/null 2>&1; then
+        log "${RED}Error: ${YELLOW}$1 is not installed or not in PATH." >&2
+        log "Install it with: ${CYAN}$2"
+        exit 1
+    fi
+}
+
+# main runners
+run_claude()
+{
+
+ local default_model="$(get_default_model)"
+ local limit="$get_default_model_limit"
+
+ log "Setting env variables for claude code"
+ export ANTHROPIC_BASE_URL="$(get_api_base_url)"
+ export ANTHROPIC_API_KEY=""
+ export ANTHROPIC_AUTH_TOKEN="$(get_api_key)"
+ export CLAUDE_CODE_ATTRIBUTION_HEADER="0"
+ export ANTHROPIC_DEFAULT_OPUS_MODEL="$default_model"
+ export ANTHROPIC_DEFAULT_SONNET_MODEL="$default_model"
+ export ANTHROPIC_DEFAULT_HAIKU_MODEL="$default_model"
+ export CLAUDE_CODE_SUBAGENT_MODEL="$default_model"
+ export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$default_model"
+
+ if [ "$limit" != "null" ]; then 
+  export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$limit"
+ fi
+ log "Running claude code"
+ claude "${@:2}"
+}
+
+run_codex()
+{
+    MIN_VERSION="0.81.0"
+
+    version_output=$(codex --version 2>/dev/null)
+
+    if [ $? -ne 0 ]; then
+        echo "Failed to get codex version. Is correct codex cli version really installed?"
+        exit 1
+    fi
+
+    version=$(echo "$version_output" | awk '{print $2}')
+
+    if [ "$(printf '%s\n%s' "$MIN_VERSION" "$version" | sort -V | head -n1)" != "$MIN_VERSION" ]; then
+        log "${RED}Codex version $version is too old. Minimum required is $MIN_VERSION."
+        log "Update with: npm update -g @openai/codex"
+        exit 1
+    fi
+
+
+    log "Setting codex env variables"
+    log "Note: limits isn't supported on codex"
+
+    export OPENAI_BASE_URL=$(get_api_base_url)
+    export OPENAI_API_KEY=$(get_api_key)
+}
+
+
+APP_NAME="$1"
+
+if [ "$APP_NAME" = "claude" ]; then
+  check_app "claude" "https://code.claude.com/docs/en/quickstart"
+  log "Running claude code"
+  run_claude
+  exit 0
+fi
+
+if [ "$APP_NAME" = "codex" ]; then
+  check_app "codex" "npm i -g @openai/codex"
+  log "Running codex cli"
+  run_codex
+  exit 0
+fi
+
+
+# config modifier
+
+if [ "$APP_NAME" = "config" ]; then
+    option="$2"  # set or get
+    key="$3"
+    value="$4"
+
+    # just so its not empty file 
+    if [ -z "$value" ]; then
+        value="null"
+    fi
+
+    if [ "$option" = "set" ]; then
+        case "$key" in
+            api_key) set_api_key "$value" ;;
+            api) set_api_base_url "$value" ;;
+            model) set_default_model "$value" ;;
+            limits) set_default_model_limit "$value" ;;
+            *)
+                log "${RED}Unknown key in config: ${YELLOW}$key"
+                exit 1
+                ;;
+        esac
+        log "${GREEN}Saved config key ${YELLOW}$key ${GREEN}successfully."
+
+    elif [ "$option" = "get" ]; then
+        case "$key" in
+            api_key) get_api_key ;;
+            api) get_api_base_url ;;
+            model) get_default_model ;;
+            limits) get_default_model_limit ;;
+            *)
+                log "${RED}Unknown key in config: ${YELLOW}$key"
+                exit 1
+                ;;
+        esac
+    else
+        log "${RED}Unknown option: ${YELLOW}$option. ${MAGENTA}Use 'set' or 'get'."
+        exit 1
+    fi
+fi
+
+if [ "$APP_NAME" = "help" ]; then
+    echo -e "${CYAN}Help:${RESET}"
+    echo ""
+
+    echo -e "${YELLOW}================ Configuration Commands ================${RESET}"
+    echo -e "${GREEN}$0 config get <item>${RESET}      - Get the value of a config item"
+    echo -e "${GREEN}$0 config set <item> [value]${RESET} - Set the value of a config item (if no value is provided, 'null' will be saved)"
+    echo ""
+    echo -e "${MAGENTA}<item>${RESET} can be one of the following:"
+    echo -e "  - ${CYAN}api${RESET}       : API base URL"
+    echo -e "  - ${CYAN}api_key${RESET}   : Your API key"
+    echo -e "  - ${CYAN}model${RESET}     : Model to use"
+    echo -e "  - ${CYAN}limits${RESET}    : Default model limits (numeric value)"
+    echo -e "${YELLOW}=======================================================${RESET}"
+    echo ""
+
+    echo -e "${YELLOW}================== Running an App =====================${RESET}"
+    echo -e "${GREEN}$0 <app> [other arguments]${RESET} - Run the specified app with optional arguments"
+    echo ""
+    echo -e "${MAGENTA}<app>${RESET} can be one of the following:"
+    echo -e "  - ${CYAN}claude${RESET}"
+    echo -e "  - ${CYAN}codex${RESET}"
+    echo -e "${YELLOW}=======================================================${RESET}"
+fi
+
